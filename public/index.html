@@ -1,0 +1,53 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mari Gourmet</title><link rel="stylesheet" href="/style.css"></head><body>
+<header><h1>Mari Gourmet</h1><small>Geladinhos e Bolos de Pote · retirada na escola</small></header>
+<main id="app"></main>
+<footer style="text-align:center;margin:24px"><a href="/admin" style="color:#9ab;font-size:12px">Área da loja</a></footer>
+<script>
+const $=s=>document.querySelector(s),brl=c=>(c/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}),app=$('#app');
+const ST={aguardando:'Aguardando pagamento',pago:'Pago',preparo:'Em preparação',pronto:'Pronto para retirada',entregue:'Entregue',cancelado:'Cancelado'};
+let menu=[],cart={},timer;
+const total=()=>Object.entries(cart).reduce((s,[id,q])=>s+q*menu.find(p=>p.id===id).price,0),count=()=>Object.values(cart).reduce((a,b)=>a+b,0);
+function renderMenu(){
+  let h='<p style="margin:8px 0">🏫 <b>Vendas presenciais na escola</b> — sem entregas. Escolha, pague e retire.</p>',cat='';
+  for(const p of menu){if(p.cat!==cat){if(cat)h+='</div>';cat=p.cat;h+=`<h2>${p.cat}<span>${brl(p.price)}</span></h2><div class="grid">`}
+    h+=`<div class="p"><div class="e">${p.emoji}</div><div class="i"><b>${p.name}</b><small>${p.desc}</small><div class="pr">${brl(p.price)}</div></div>
+    <div class="q"><button class="m" data-s="${p.id}">−</button><span id="q-${p.id}">${cart[p.id]||0}</span><button data-a="${p.id}">+</button></div></div>`}
+  app.innerHTML=h+'</div><div class="bar"><button class="btn" id="go" disabled></button></div>';upd();
+}
+function upd(){for(const p of menu){const e=$('#q-'+p.id);if(e)e.textContent=cart[p.id]||0}
+  const b=$('#go');if(!b)return;b.disabled=!count();b.textContent=count()?`Ver sacola · ${count()} item(ns) · ${brl(total())}`:'Sacola vazia'}
+app.addEventListener('click',e=>{const t=e.target;
+  if(t.dataset.a){cart[t.dataset.a]=Math.min(20,(cart[t.dataset.a]||0)+1);upd();if($('#lst'))checkout()}
+  if(t.dataset.s){const q=(cart[t.dataset.s]||0)-1;q>0?cart[t.dataset.s]=q:delete cart[t.dataset.s];upd();if($('#lst'))count()?checkout():renderMenu()}
+  if(t.id==='go')checkout();if(t.id==='back')renderMenu();if(t.id==='send')send();if(t.id==='new'){localStorage.removeItem('ord');renderMenu()}
+  if(t.id==='copy'){navigator.clipboard?.writeText(t.dataset.c);t.textContent='Copiado ✔'}});
+function checkout(){
+  const keep=['nm','rm'].map(i=>$('#'+i)?.value||''),pay=document.querySelector('input[name=pay]:checked')?.value||'pix';
+  app.innerHTML=`<div class="sheet"><h2 id="lst">Sua sacola</h2>${Object.entries(cart).map(([id,q])=>{const p=menu.find(x=>x.id===id);return `<div class="p" style="margin:6px 0"><div class="i"><b>${p.name}</b><small>${p.cat}</small></div><div class="q"><button class="m" data-s="${id}">−</button><span>${q}</span><button data-a="${id}">+</button></div><b>${brl(p.price*q)}</b></div>`}).join('')}
+  <h2>Total: ${brl(total())}</h2><label>Seu nome<input type="text" id="nm" maxlength="60" autocomplete="name" value="${keep[0]}"></label>
+  <label>Sua sala / turma<input type="text" id="rm" maxlength="30" value="${keep[1]}"></label>
+  <label class="r"><input type="radio" name="pay" value="pix" ${pay==='pix'?'checked':''}> <b>PIX</b> — pague agora pelo site, confirmação automática</label>
+  <label class="r"><input type="radio" name="pay" value="card" ${pay==='card'?'checked':''}> <b>Cartão</b> — pagamento presencial</label>
+  <div class="warn ${pay==='card'?'':'hide'}" id="cw">💳 <b>Atenção:</b> o cartão <b>não é cobrado pelo site</b>. Você paga na hora da retirada, direto com a vendedora. O pedido fica como "Aguardando pagamento" até ela confirmar o recebimento.</div>
+  <div class="err" id="er"></div><button class="btn gr" id="send">Finalizar pedido</button><button class="btn" id="back" style="background:#fff;color:var(--b);margin-top:8px">← Voltar ao cardápio</button></div>`;
+  document.querySelectorAll('input[name=pay]').forEach(r=>r.onchange=()=>$('#cw').classList.toggle('hide',r.value!=='card'));
+}
+async function send(){const b=$('#send');b.disabled=true;$('#er').textContent='';
+  const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#nm').value,room:$('#rm').value,payment:document.querySelector('input[name=pay]:checked').value,items:Object.entries(cart).map(([id,qty])=>({id,qty}))})}).catch(()=>null);
+  const d=r&&await r.json();if(!r||!r.ok){$('#er').textContent=d?.error||'Sem conexão. Tente de novo.';b.disabled=false;return}
+  cart={};localStorage.setItem('ord',JSON.stringify({id:d.id,t:d.token}));showOrder({id:d.id,t:d.token})}
+async function showOrder(o){clearTimeout(timer);
+  const r=await fetch(`/api/orders/${o.id}?t=${o.t}`).catch(()=>null);
+  if(r&&r.status===404){localStorage.removeItem('ord');return renderMenu()}
+  if(r&&r.ok){const d=await r.json();
+    app.innerHTML=`<div class="sheet"><h2>Pedido #${d.id}</h2><p><span class="st s-${d.status}">${ST[d.status]}</span></p>
+    <p style="margin:10px 0">${d.name} · Sala ${d.room}</p>${d.items.map(i=>`<p>${i.qty}× ${i.name}</p>`).join('')}<h2>Total: ${brl(d.total_cents)}</h2>
+    ${d.status==='aguardando'&&d.payment==='pix'&&d.pix_qr?`<div class="warn" style="text-align:center"><b>Pague com PIX</b> (vale por 30 min)<br><img alt="QR Code PIX" style="width:230px;max-width:100%" src="data:image/png;base64,${d.pix_qr}"><br><button class="btn" id="copy" data-c="${d.pix_code}">Copiar código PIX</button><p style="margin-top:8px">Esta tela atualiza sozinha quando o pagamento for confirmado.</p></div>`:''}
+    ${d.status==='aguardando'&&d.payment==='card'?'<div class="warn">💳 Pague com cartão na retirada. A vendedora confirmará o pagamento.</div>':''}
+    ${d.status==='pronto'?'<div class="warn" style="background:#efe3f7;border-color:#8e44ad">🎉 <b>Seu pedido está pronto! Venha retirar.</b></div>':''}
+    ${['entregue','cancelado'].includes(d.status)?'<button class="btn" id="new">Fazer novo pedido</button>':''}</div>`;
+    if(!['entregue','cancelado'].includes(d.status))timer=setTimeout(()=>showOrder(o),4000);return}
+  timer=setTimeout(()=>showOrder(o),6000)}
+(async()=>{menu=await(await fetch('/api/menu')).json();const s=localStorage.getItem('ord');s?showOrder(JSON.parse(s)):renderMenu()})();
+</script></body></html>
